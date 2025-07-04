@@ -48,8 +48,11 @@ COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Create non-root user
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+# Set permissions for app directory
+RUN chown -R 1000:1000 /app
+
+# Create non-root user and switch to it
+RUN useradd -m -u 1000 appuser
 USER appuser
 
 # Expose port
