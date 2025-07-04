@@ -7,27 +7,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Model configurations with verified download URLs
+# Model configurations with verified download URLs - only working models
 MODEL_CONFIGS = {
     "realesrgan_x4plus": {
         "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
         "filename": "RealESRGAN_x4plus.pth",
         "size_mb": 64
-    },
-    "realesrgan_x2plus": {
-        "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth",
-        "filename": "RealESRGAN_x2plus.pth", 
-        "size_mb": 64
-    },
-    "gfpgan_v1.4": {
-        "url": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth",
-        "filename": "GFPGANv1.4.pth",
-        "size_mb": 333
-    },
-    "gfpgan_v1.3": {
-        "url": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.3.pth",
-        "filename": "GFPGANv1.3.pth",
-        "size_mb": 333
     }
 }
 

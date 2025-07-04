@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from celery import Celery
 from celery.result import AsyncResult
 import os
@@ -38,6 +39,45 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Global exception handler for serialization errors
+@app.exception_handler(UnicodeDecodeError)
+async def unicode_decode_error_handler(request, exc):
+    logger.error(f"Unicode decode error: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error - data encoding issue"}
+    )
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request, exc):
+    if "cannot be serialized" in str(exc) or "json" in str(exc).lower():
+        logger.error(f"JSON serialization error: {exc}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error - data serialization issue"}
+        )
+    raise exc
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request, exc):
+    error_msg = str(exc)
+    if any(phrase in error_msg for phrase in [
+        "utf-8 codec can't decode", 
+        "UnicodeDecodeError",
+        "cannot be serialized",
+        "jsonable_encoder"
+    ]):
+        logger.error(f"Encoding/serialization error: {exc}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error - data encoding/serialization issue"}
+        )
+    logger.error(f"Unhandled exception: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"}
+    )
 
 # Global variables for tracking
 startup_complete = False
@@ -255,11 +295,59 @@ async def get_task_result(task_id: str):
         if result.ready():
             if result.successful():
                 task_result = result.get()
+                
+                # Completely clean the result to ensure JSON serialization
+                def clean_for_json(obj):
+                    """Recursively clean an object for JSON serialization."""
+                    if obj is None:
+                        return None
+                    elif isinstance(obj, bool):
+                        return obj
+                    elif isinstance(obj, (int, float)):
+                        return obj
+                    elif isinstance(obj, str):
+                        # Ensure string is valid UTF-8
+                        try:
+                            obj.encode('utf-8')
+                            return obj
+                        except UnicodeError:
+                            return str(obj)
+                    elif isinstance(obj, bytes):
+                        # Never include bytes in the result
+                        return f"<binary data: {len(obj)} bytes>"
+                    elif isinstance(obj, dict):
+                        cleaned = {}
+                        for k, v in obj.items():
+                            try:
+                                key = str(k)
+                                cleaned[key] = clean_for_json(v)
+                            except Exception:
+                                pass  # Skip problematic keys
+                        return cleaned
+                    elif isinstance(obj, (list, tuple)):
+                        cleaned = []
+                        for item in obj:
+                            try:
+                                cleaned_item = clean_for_json(item)
+                                if cleaned_item is not None:
+                                    cleaned.append(cleaned_item)
+                            except Exception:
+                                pass  # Skip problematic items
+                        return cleaned
+                    else:
+                        # Convert everything else to string, but safely
+                        try:
+                            return str(obj)
+                        except Exception:
+                            return "<unserializable object>"
+                
+                cleaned_result = clean_for_json(task_result)
+                
                 return {
                     "success": True,
                     "status": "completed",
                     "task_id": task_id,
-                    "result": task_result
+                    "result": cleaned_result
                 }
             else:
                 error = str(result.info) if result.info else "Unknown error"
@@ -280,7 +368,12 @@ async def get_task_result(task_id: str):
             
     except Exception as e:
         logger.error(f"Get result error for task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "success": False,
+            "status": "error",
+            "task_id": task_id,
+            "error": str(e)
+        }
 
 @app.get("/tasks/active")
 async def get_active_tasks():
@@ -290,14 +383,34 @@ async def get_active_tasks():
         inspect = celery_app.control.inspect()
         active_tasks = inspect.active()
         
+        # Clean the response to avoid serialization issues
+        cleaned_tasks = {}
+        if active_tasks:
+            for worker, tasks in active_tasks.items():
+                cleaned_tasks[worker] = []
+                for task in tasks:
+                    # Only include serializable fields
+                    cleaned_task = {
+                        "id": task.get("id", ""),
+                        "name": task.get("name", ""),
+                        "time_start": task.get("time_start", 0)
+                    }
+                    cleaned_tasks[worker].append(cleaned_task)
+        
         return {
             "success": True,
-            "active_tasks": active_tasks or {},
+            "active_tasks": cleaned_tasks,
             "timestamp": time.time()
         }
     except Exception as e:
         logger.error(f"Get active tasks error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Return empty result instead of raising exception
+        return {
+            "success": True,
+            "active_tasks": {},
+            "timestamp": time.time(),
+            "error": "Could not retrieve active tasks"
+        }
 
 @app.get("/stats")
 async def get_stats():
@@ -328,18 +441,32 @@ async def get_stats():
         }
         
         if torch.cuda.is_available():
-            gpu_stats["memory"] = {
-                "allocated": torch.cuda.memory_allocated(),
-                "cached": torch.cuda.memory_reserved()
-            }
+            try:
+                gpu_stats["memory"] = {
+                    "allocated": torch.cuda.memory_allocated(),
+                    "cached": torch.cuda.memory_reserved()
+                }
+            except Exception:
+                gpu_stats["memory"] = {"error": "Could not get GPU memory stats"}
         
-        # Celery stats
-        inspect = celery_app.control.inspect()
+        # Simplified Celery stats to avoid serialization issues
         celery_stats = {
-            "active_tasks": inspect.active() or {},
-            "scheduled_tasks": inspect.scheduled() or {},
-            "reserved_tasks": inspect.reserved() or {}
+            "workers_online": 0,
+            "active_task_count": 0
         }
+        
+        try:
+            inspect = celery_app.control.inspect()
+            stats = inspect.stats()
+            if stats:
+                celery_stats["workers_online"] = len(stats)
+            
+            active = inspect.active()
+            if active:
+                total_active = sum(len(tasks) for tasks in active.values())
+                celery_stats["active_task_count"] = total_active
+        except Exception:
+            pass  # Ignore Celery inspection errors
         
         return {
             "success": True,
@@ -351,7 +478,11 @@ async def get_stats():
         
     except Exception as e:
         logger.error(f"Get stats error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": time.time()
+        }
 
 @app.post("/admin/clear-cache")
 async def clear_cache():

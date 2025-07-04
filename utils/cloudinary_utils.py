@@ -28,43 +28,66 @@ class CloudinaryManager:
             # Convert PIL Image to bytes
             buffer = BytesIO()
             
-            # Optimize format based on image content
-            if format == "auto":
-                format = "webp" if image.mode in ["RGB", "RGBA"] else "png"
+            # Normalize format and set save parameters
+            format_lower = format.lower()
+            if format_lower in ["jpg", "jpeg"]:
+                save_format = "JPEG"
+                cloudinary_format = "jpg"
+                save_kwargs = {"format": "JPEG", "quality": 95, "optimize": True}
+            elif format_lower == "png":
+                save_format = "PNG"
+                cloudinary_format = "png"
+                save_kwargs = {"format": "PNG", "optimize": True}
+            else:
+                save_format = "WEBP"
+                cloudinary_format = "webp"
+                save_kwargs = {"format": "WEBP", "quality": 90, "method": 6}
             
-            # Save with optimization
-            save_kwargs = {"format": format.upper()}
-            if format.lower() in ["jpeg", "jpg"]:
-                save_kwargs["quality"] = 95
-                save_kwargs["optimize"] = True
-            elif format.lower() == "webp":
-                save_kwargs["quality"] = 90
-                save_kwargs["method"] = 6
-            elif format.lower() == "png":
-                save_kwargs["optimize"] = True
+            # Ensure image is in correct mode for the format
+            if save_format == "JPEG":
+                # JPEG doesn't support transparency
+                if image.mode in ["RGBA", "LA", "P"]:
+                    background = Image.new('RGB', image.size, (255, 255, 255))
+                    if image.mode == "P":
+                        image = image.convert("RGBA")
+                    if image.mode in ["RGBA", "LA"]:
+                        background.paste(image, mask=image.split()[-1] if image.mode == "RGBA" else None)
+                    image = background
+                elif image.mode not in ["RGB", "L"]:
+                    image = image.convert("RGB")
+            elif save_format == "PNG":
+                # PNG supports transparency
+                if image.mode not in ["RGB", "RGBA", "L", "LA", "P"]:
+                    image = image.convert("RGBA")
+            else:  # WEBP
+                # WEBP supports transparency
+                if image.mode not in ["RGB", "RGBA"]:
+                    image = image.convert("RGB")
                 
+            # Save image to buffer
             image.save(buffer, **save_kwargs)
             buffer.seek(0)
             
-            # Generate public_id
-            public_id = f"{folder}/{filename.split('.')[0]}"
+            # Generate clean public_id
+            base_name = filename.split('.')[0] if '.' in filename else filename
+            # Remove any problematic characters
+            safe_base_name = "".join(c for c in base_name if c.isalnum() or c in "._-")
+            public_id = f"{folder}/{safe_base_name}"
             
-            # Upload to Cloudinary
+            # Upload to Cloudinary with explicit format
             upload_result = cloudinary.uploader.upload(
                 buffer,
                 public_id=public_id,
                 folder=folder,
                 resource_type="image",
-                quality=quality,
-                format=format,
+                format=cloudinary_format,
                 overwrite=True,
-                transformation=[
-                    {"quality": "auto:good"},
-                    {"fetch_format": "auto"}
-                ]
+                quality="auto:good",
+                use_filename=False,  # Don't use original filename
+                unique_filename=True  # Generate unique name
             )
             
-            logger.info(f"Successfully uploaded {filename} to Cloudinary")
+            logger.info(f"Successfully uploaded {filename} to Cloudinary as {save_format}")
             return upload_result
             
         except Exception as e:
