@@ -21,6 +21,30 @@ logger = logging.getLogger(__name__)
 celery_app = Celery("tasks")
 celery_app.config_from_object("celeryconfig")
 
+# Global model cache for performance
+_model_cache = {
+    'realesrgan': None,
+    'gfpgan': None
+}
+
+def get_realesrgan_model():
+    """Get cached Real-ESRGAN model or create new one."""
+    global _model_cache
+    if _model_cache['realesrgan'] is None:
+        from inference.realesrgan_inference import RealESRGANInference
+        _model_cache['realesrgan'] = RealESRGANInference(device=settings.device)
+        _model_cache['realesrgan'].load_model()
+    return _model_cache['realesrgan']
+
+def get_gfpgan_model():
+    """Get cached GFPGAN model or create new one."""
+    global _model_cache
+    if _model_cache['gfpgan'] is None:
+        from inference.gfpgan_inference import GFPGANInference
+        _model_cache['gfpgan'] = GFPGANInference(device=settings.device)
+        _model_cache['gfpgan'].load_model()
+    return _model_cache['gfpgan']
+
 @celery_app.task(name="tasks.upscale_esrgan", bind=True, max_retries=3)
 def upscale_esrgan(self, image_bytes: bytes, filename: str, options: Optional[Dict] = None) -> Dict[str, Any]:
     """
@@ -85,9 +109,14 @@ def upscale_esrgan(self, image_bytes: bytes, filename: str, options: Optional[Di
                 "task_id": task_id
             })
         
-        # Perform upscaling
+        # Perform upscaling using cached model
         processing_start = time.time()
-        upscaled_image = upscale_image(image)
+        try:
+            model = get_realesrgan_model()
+            upscaled_image = model.upscale(image)
+        except Exception as e:
+            logger.error(f"Task {task_id}: Model error, falling back: {e}")
+            upscaled_image = upscale_image(image)  # Fallback to original function
         processing_time = time.time() - processing_start
         
         if upscaled_image is None:
@@ -260,9 +289,14 @@ def enhance_gfpgan(self, image_bytes: bytes, filename: str, options: Optional[Di
             logger.warning(f"Task {task_id}: No faces detected, but continuing with enhancement")
             face_count = 1  # Set to 1 to continue processing
         
-        # Perform face enhancement
+        # Perform face enhancement using cached model
         processing_start = time.time()
-        enhanced_image = enhance_faces(image, only_center_face=only_center_face)
+        try:
+            model = get_gfpgan_model()
+            enhanced_image = model.enhance_faces(image, only_center_face=only_center_face)
+        except Exception as e:
+            logger.error(f"Task {task_id}: Model error, falling back: {e}")
+            enhanced_image = enhance_faces(image, only_center_face=only_center_face)  # Fallback
         processing_time = time.time() - processing_start
         
         if enhanced_image is None:

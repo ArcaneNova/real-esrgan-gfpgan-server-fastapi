@@ -504,6 +504,55 @@ async def clear_cache():
         logger.error(f"Clear cache error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/admin/download-models")
+async def download_models():
+    """Manually trigger model downloads (admin endpoint)."""
+    try:
+        logger.info("Starting manual model download...")
+        models_ready = ensure_models_downloaded(settings.model_cache_dir)
+        
+        if models_ready:
+            return {
+                "success": True,
+                "message": "All models downloaded successfully"
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Some models failed to download. Check logs for details."
+            }
+    except Exception as e:
+        logger.error(f"Manual model download error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/admin/restart-models")
+async def restart_models():
+    """Restart AI models for optimal performance (admin endpoint)."""
+    try:
+        # Clear model cache to force reload with latest settings
+        from tasks import _model_cache
+        _model_cache['realesrgan'] = None
+        _model_cache['gfpgan'] = None
+        
+        # Clear GPU memory
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+        
+        import gc
+        gc.collect()
+        
+        return {
+            "success": True,
+            "message": "Models restarted successfully. Next inference will reload models."
+        }
+    except Exception as e:
+        logger.error(f"Restart models error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

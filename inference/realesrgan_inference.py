@@ -20,7 +20,7 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 class RealESRGANInference:
-    def __init__(self, model_name: str = "realesrgan_x4plus", device: Optional[str] = None):
+    def __init__(self, model_name: str = "realesrgan_general_x4v3", device: Optional[str] = None):
         self.model_name = model_name
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = None
@@ -47,7 +47,19 @@ class RealESRGANInference:
                 model_path = downloader.get_model_path(self.model_name)
             
             # Configure model parameters based on model type
-            if "x4plus" in self.model_name:
+            if "general" in self.model_name:
+                # realesr-general-x4v3 - newer, more robust, tiny model
+                scale = 4
+                model_arch = RRDBNet(
+                    num_in_ch=3, 
+                    num_out_ch=3, 
+                    num_feat=32,  # Smaller feature size for general model
+                    num_block=4,  # Fewer blocks for faster inference
+                    num_grow_ch=32, 
+                    scale=4
+                )
+            elif "x4plus" in self.model_name:
+                # Legacy x4plus model
                 scale = 4
                 model_arch = RRDBNet(
                     num_in_ch=3, 
@@ -68,27 +80,37 @@ class RealESRGANInference:
                     scale=2
                 )
             else:
+                # Default to general model architecture
                 scale = 4
                 model_arch = RRDBNet(
                     num_in_ch=3, 
                     num_out_ch=3, 
-                    num_feat=64, 
-                    num_block=23, 
+                    num_feat=32, 
+                    num_block=4, 
                     num_grow_ch=32, 
                     scale=4
                 )
             
-            # Initialize the upscaler
+            # Initialize the upscaler with performance optimizations
             self.model = RealESRGANer(
                 scale=scale,
                 model_path=str(model_path),
                 model=model_arch,
-                tile=0,  # Disable tiling for speed
+                tile=512,  # Enable tiling for memory efficiency and speed
                 tile_pad=10,
                 pre_pad=0,
-                half=True if self.device == 'cuda' else False,
+                half=True if self.device == 'cuda' else False,  # Use half precision on GPU
                 device=self.device
             )
+            
+            # Optimize for inference
+            if hasattr(self.model.model, 'eval'):
+                self.model.model.eval()
+            
+            # Enable GPU optimizations if available
+            if self.device == 'cuda' and torch.cuda.is_available():
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cudnn.deterministic = False
             
             self.is_loaded = True
             logger.info(f"Real-ESRGAN model loaded successfully: {model_path}")
@@ -105,31 +127,43 @@ class RealESRGANInference:
                 return None
         
         try:
-            # Convert PIL to numpy array
+            # Pre-process image for optimal inference
             image_np = np.array(image)
             
-            # Ensure RGB format
+            # Ensure RGB format and optimize dimensions
             if len(image_np.shape) == 3 and image_np.shape[2] == 4:  # RGBA
-                # Convert RGBA to RGB
-                background = Image.new('RGB', image.size, (255, 255, 255))
-                background.paste(image, mask=image.split()[-1])
-                image_np = np.array(background)
+                # Convert RGBA to RGB efficiently
+                rgb = image_np[:, :, :3]
+                alpha = image_np[:, :, 3:4] / 255.0
+                image_np = (rgb * alpha + (1 - alpha) * 255).astype(np.uint8)
             elif len(image_np.shape) == 2:  # Grayscale
                 image_np = np.stack([image_np] * 3, axis=2)
             
-            # Perform enhancement
+            # Optimize input size - resize if too large for speed
+            h, w = image_np.shape[:2]
+            max_size = 2048  # Maximum input dimension for speed
+            if max(h, w) > max_size:
+                ratio = max_size / max(h, w)
+                new_h, new_w = int(h * ratio), int(w * ratio)
+                image_resized = Image.fromarray(image_np).resize((new_w, new_h), Image.Resampling.LANCZOS)
+                image_np = np.array(image_resized)
+                logger.info(f"Resized input from {(w, h)} to {(new_w, new_h)} for faster processing")
+            
+            # Perform enhancement with optimizations
             logger.info(f"Upscaling image with shape: {image_np.shape}")
-            output_np, _ = self.model.enhance(image_np, outscale=None)
+            
+            with torch.no_grad():  # Disable gradient computation for speed
+                output_np, _ = self.model.enhance(image_np, outscale=None)
             
             # Convert back to PIL Image
             output_image = Image.fromarray(output_np)
             
             logger.info(f"Upscaling completed. Output shape: {output_np.shape}")
             
-            # Clean up GPU memory
+            # Aggressive memory cleanup for high concurrency
             if self.device == 'cuda':
                 torch.cuda.empty_cache()
-                gc.collect()
+            gc.collect()
             
             return output_image
             

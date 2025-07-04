@@ -12,10 +12,24 @@ result_serializer = 'json'
 timezone = 'UTC'
 enable_utc = True
 
-# Worker settings
-worker_prefetch_multiplier = 1
-task_acks_late = True
-worker_max_tasks_per_child = 50
+# Worker settings optimized for high concurrency
+worker_prefetch_multiplier = 1  # Process one task at a time per worker
+task_acks_late = True  # Acknowledge task only after completion
+worker_max_tasks_per_child = 10  # Restart workers more frequently to prevent memory leaks
+worker_concurrency = 4  # Number of concurrent worker processes
+worker_pool = 'prefork'  # Use prefork for better isolation
+
+# Performance optimizations
+task_compression = 'gzip'  # Compress task data
+result_compression = 'gzip'  # Compress results
+task_ignore_result = False  # We need results
+result_expires = 3600  # Results expire in 1 hour
+task_soft_time_limit = 300  # 5 minutes soft limit
+task_time_limit = 600  # 10 minutes hard limit
+
+# Memory management
+worker_disable_rate_limits = True
+worker_pool_restarts = True
 
 # Queue settings
 task_routes = {

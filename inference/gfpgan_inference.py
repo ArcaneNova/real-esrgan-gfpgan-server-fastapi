@@ -35,22 +35,28 @@ class GFPGANInference:
             return False
             
         try:
-            # Try to find any available GFPGAN model
+            # Try to use model downloader first
             downloader = ModelDownloader(settings.model_cache_dir)
-            model_path = None
+            model_path = downloader.get_model_path("gfpgan_v1.4")
             
-            # Look for existing model files
-            model_dir = Path(settings.model_cache_dir)
-            for model_file in ["GFPGANv1.4.pth", "GFPGANv1.3.pth"]:
-                potential_path = model_dir / model_file
-                if potential_path.exists() and potential_path.stat().st_size > 100 * 1024 * 1024:  # At least 100MB
-                    model_path = potential_path
-                    logger.info(f"Found existing GFPGAN model: {model_path}")
-                    break
-            
-            if not model_path:
-                logger.warning("No valid GFPGAN model found, GFPGAN features will use fallback")
-                return False
+            if not model_path or not model_path.exists():
+                logger.info("Downloading GFPGAN v1.4 model...")
+                if not downloader.download_model("gfpgan_v1.4"):
+                    logger.error("Failed to download GFPGAN model")
+                    # Fallback: look for existing model files
+                    model_dir = Path(settings.model_cache_dir)
+                    for model_file in ["GFPGANv1.4.pth", "GFPGANv1.3.pth"]:
+                        potential_path = model_dir / model_file
+                        if potential_path.exists() and potential_path.stat().st_size > 100 * 1024 * 1024:  # At least 100MB
+                            model_path = potential_path
+                            logger.info(f"Found existing GFPGAN model: {model_path}")
+                            break
+                    
+                    if not model_path:
+                        logger.warning("No valid GFPGAN model found, GFPGAN features will use fallback")
+                        return False
+                else:
+                    model_path = downloader.get_model_path("gfpgan_v1.4")
             
             # Initialize GFPGAN
             self.model = GFPGANer(
