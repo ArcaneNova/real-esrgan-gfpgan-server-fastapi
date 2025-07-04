@@ -42,16 +42,16 @@ RUN mkdir -p /app/models /app/temp /app/logs
 COPY . .
 
 # Pre-download models for faster startup
-RUN python -c "
-import os
-os.environ['MODEL_CACHE_DIR'] = '/app/models'
-from utils import ensure_models_downloaded
-try:
-    ensure_models_downloaded('/app/models')
-    print('Models pre-downloaded successfully')
-except Exception as e:
-    print(f'Model pre-download failed: {e}')
-    print('Models will be downloaded on first run')
+RUN python -c "\
+import os; \
+os.environ['MODEL_CACHE_DIR'] = '/app/models'; \
+from utils import ensure_models_downloaded; \
+try: \
+    ensure_models_downloaded('/app/models'); \
+    print('Models pre-downloaded successfully'); \
+except Exception as e: \
+    print(f'Model pre-download failed: {e}'); \
+    print('Models will be downloaded on first run'); \
 "
 
 # Copy supervisor configuration
