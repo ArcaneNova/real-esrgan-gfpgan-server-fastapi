@@ -1,0 +1,86 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Cache pip packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-asyncio httpx
+    
+    - name: Create test directories
+      run: |
+        mkdir -p models temp logs
+    
+    - name: Run health check tests
+      run: |
+        python -c "
+        import sys
+        sys.path.append('.')
+        from config import settings
+        print('Configuration loaded successfully')
+        "
+    
+    - name: Test model downloader
+      run: |
+        python -c "
+        import sys
+        sys.path.append('.')
+        from utils.model_downloader import ModelDownloader
+        downloader = ModelDownloader('./models')
+        print('Model downloader initialized successfully')
+        "
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Build Docker image
+      run: |
+        docker build -t image-upscaler-api .
+    
+    - name: Test Docker image
+      run: |
+        docker run --rm -d -p 8000:8000 --name test-container image-upscaler-api
+        sleep 30
+        curl -f http://localhost:8000/health || exit 1
+        docker stop test-container

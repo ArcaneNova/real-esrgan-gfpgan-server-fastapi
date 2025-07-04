@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  image-upscaler-api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
+      - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
+      - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
+      - REDIS_BROKER=redis://localhost:6379/0
+      - REDIS_BACKEND=redis://localhost:6379/0
+      - ENVIRONMENT=production
+      - MAX_WORKERS=2
+      - MODEL_CACHE_DIR=/app/models
+      - TEMP_DIR=/app/temp
+    volumes:
+      - models_cache:/app/models
+      - temp_files:/app/temp
+      - logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  models_cache:
+  temp_files:
+  logs:
