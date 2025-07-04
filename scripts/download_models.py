@@ -1,53 +1,44 @@
 #!/usr/bin/env python3
 """
-Alternative model downloader with better URLs and fallbacks
+Model downloader for optimized production models
 """
 
 import os
-import requests
+import sys
 import logging
 from pathlib import Path
-from typing import Dict, List
+
+# Add parent directory to path
+sys.path.append(str(Path(__file__).parent.parent))
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Working model URLs (verified and tested)
-WORKING_MODELS = {
-    "realesrgan_x4plus": {
-        "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
-        "filename": "RealESRGAN_x4plus.pth",
-        "description": "Real-ESRGAN 4x upscaler",
-        "essential": True
-    },
-    "realesrgan_x4plus_anime": {
-        "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
-        "filename": "RealESRGAN_x4plus_anime_6B.pth", 
-        "description": "Real-ESRGAN 4x anime upscaler",
-        "essential": False
-    }
-}
-
-def download_file(url: str, filepath: Path) -> bool:
-    """Download a file with progress tracking."""
+def main():
+    """Download models for production use."""
     try:
-        logger.info(f"📥 Downloading {filepath.name}...")
+        # Set environment
+        os.environ['MODEL_CACHE_DIR'] = '/app/models'
         
-        response = requests.get(url, stream=True)
-        response.raise_for_status()
+        # Import after setting environment
+        from utils import ensure_models_downloaded
         
-        total_size = int(response.headers.get('content-length', 0))
-        downloaded_size = 0
+        logger.info("� Starting optimized model download...")
+        success = ensure_models_downloaded('/app/models')
         
-        with open(filepath, 'wb') as file:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    file.write(chunk)
-                    downloaded_size += len(chunk)
-                    
-                    # Progress every 10MB
-                    if downloaded_size % (10 * 1024 * 1024) == 0:
-                        mb_downloaded = downloaded_size / (1024 * 1024)
+        if success:
+            logger.info("✅ All optimized models downloaded successfully!")
+        else:
+            logger.warning("⚠️ Some models failed to download, but continuing...")
+            logger.info("Models will be downloaded on first run")
+            
+    except Exception as e:
+        logger.error(f"❌ Model download failed: {e}")
+        logger.info("Models will be downloaded on first run")
+        # Don't fail the build, just continue
+        
+if __name__ == "__main__":
+    main()
                         logger.info(f"  Downloaded {mb_downloaded:.1f}MB...")
         
         file_size_mb = filepath.stat().st_size / (1024 * 1024)

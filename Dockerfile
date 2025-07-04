@@ -41,18 +41,8 @@ RUN mkdir -p /app/models /app/temp /app/logs
 # Copy application code
 COPY . .
 
-# Pre-download models for faster startup
-RUN python -c "\
-import os; \
-os.environ['MODEL_CACHE_DIR'] = '/app/models'; \
-from utils import ensure_models_downloaded; \
-try: \
-    ensure_models_downloaded('/app/models'); \
-    print('Models pre-downloaded successfully'); \
-except Exception as e: \
-    print(f'Model pre-download failed: {e}'); \
-    print('Models will be downloaded on first run'); \
-"
+# Pre-download models for faster startup using existing script
+RUN python scripts/download_models.py
 
 # Copy supervisor configuration
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
