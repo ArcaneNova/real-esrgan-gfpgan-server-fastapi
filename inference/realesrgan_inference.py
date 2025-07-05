@@ -8,10 +8,17 @@ from pathlib import Path
 
 try:
     from basicsr.archs.rrdbnet_arch import RRDBNet
+    try:
+        from basicsr.archs.srvgg_arch import SRVGGNetCompact
+        SRVGG_AVAILABLE = True
+    except ImportError:
+        SRVGG_AVAILABLE = False
+        logging.warning("SRVGGNetCompact not available. Using RRDBNet for all models.")
     from realesrgan import RealESRGANer
     REALESRGAN_AVAILABLE = True
 except ImportError:
     REALESRGAN_AVAILABLE = False
+    SRVGG_AVAILABLE = False
     logging.warning("Real-ESRGAN not available. Install with: pip install realesrgan")
 
 from utils.model_downloader import ModelDownloader
@@ -47,19 +54,32 @@ class RealESRGANInference:
                 model_path = downloader.get_model_path(self.model_name)
             
             # Configure model parameters based on model type
-            if "general" in self.model_name:
-                # realesr-general-x4v3 - newer, more robust, tiny model
+            if "general" in self.model_name and SRVGG_AVAILABLE:
+                # realesr-general-x4v3 - uses SRVGGNetCompact architecture
+                scale = 4
+                model_arch = SRVGGNetCompact(
+                    num_in_ch=3, 
+                    num_out_ch=3, 
+                    num_feat=64,
+                    num_conv=32,
+                    upscale=4,
+                    act_type='prelu'
+                )
+                logger.info("Using SRVGGNetCompact architecture for general model")
+            elif "general" in self.model_name and not SRVGG_AVAILABLE:
+                # Fallback to RRDBNet for general model if SRVGGNetCompact not available
                 scale = 4
                 model_arch = RRDBNet(
                     num_in_ch=3, 
                     num_out_ch=3, 
-                    num_feat=32,  # Smaller feature size for general model
-                    num_block=4,  # Fewer blocks for faster inference
+                    num_feat=64, 
+                    num_block=6,  # Smaller for speed
                     num_grow_ch=32, 
                     scale=4
                 )
+                logger.warning("SRVGGNetCompact not available. Using RRDBNet fallback for general model")
             elif "x4plus" in self.model_name:
-                # Legacy x4plus model
+                # Legacy x4plus model - uses RRDBNet architecture
                 scale = 4
                 model_arch = RRDBNet(
                     num_in_ch=3, 
@@ -80,28 +100,64 @@ class RealESRGANInference:
                     scale=2
                 )
             else:
-                # Default to general model architecture
+                # Default to SRVGGNetCompact for modern models, fallback to RRDBNet
                 scale = 4
-                model_arch = RRDBNet(
-                    num_in_ch=3, 
-                    num_out_ch=3, 
-                    num_feat=32, 
-                    num_block=4, 
-                    num_grow_ch=32, 
-                    scale=4
-                )
+                if SRVGG_AVAILABLE:
+                    model_arch = SRVGGNetCompact(
+                        num_in_ch=3, 
+                        num_out_ch=3, 
+                        num_feat=64,
+                        num_conv=32,
+                        upscale=4,
+                        act_type='prelu'
+                    )
+                else:
+                    model_arch = RRDBNet(
+                        num_in_ch=3, 
+                        num_out_ch=3, 
+                        num_feat=64, 
+                        num_block=6, 
+                        num_grow_ch=32, 
+                        scale=4
+                    )
             
             # Initialize the upscaler with performance optimizations
-            self.model = RealESRGANer(
-                scale=scale,
-                model_path=str(model_path),
-                model=model_arch,
-                tile=512,  # Enable tiling for memory efficiency and speed
-                tile_pad=10,
-                pre_pad=0,
-                half=True if self.device == 'cuda' else False,  # Use half precision on GPU
-                device=self.device
-            )
+            try:
+                self.model = RealESRGANer(
+                    scale=scale,
+                    model_path=str(model_path),
+                    model=model_arch,
+                    tile=512,  # Enable tiling for memory efficiency and speed
+                    tile_pad=10,
+                    pre_pad=0,
+                    half=True if self.device == 'cuda' else False,  # Use half precision on GPU
+                    device=self.device
+                )
+            except Exception as arch_error:
+                logger.warning(f"Architecture mismatch with {model_arch.__class__.__name__}: {arch_error}")
+                # Fallback to RRDBNet with minimal configuration
+                if not isinstance(model_arch, RRDBNet):
+                    logger.info("Trying RRDBNet fallback architecture...")
+                    model_arch = RRDBNet(
+                        num_in_ch=3, 
+                        num_out_ch=3, 
+                        num_feat=64, 
+                        num_block=6, 
+                        num_grow_ch=32, 
+                        scale=scale
+                    )
+                    self.model = RealESRGANer(
+                        scale=scale,
+                        model_path=str(model_path),
+                        model=model_arch,
+                        tile=512,
+                        tile_pad=10,
+                        pre_pad=0,
+                        half=True if self.device == 'cuda' else False,
+                        device=self.device
+                    )
+                else:
+                    raise arch_error
             
             # Optimize for inference
             if hasattr(self.model.model, 'eval'):

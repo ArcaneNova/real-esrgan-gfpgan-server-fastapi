@@ -253,41 +253,20 @@ def enhance_gfpgan(self, image_bytes: bytes, filename: str, options: Optional[Di
                 "task_id": task_id
             })
         
-        # Additional size check for very large images
-        if max(image.size) > 4096:
-            # Resize to reasonable size for processing
-            ratio = 4096 / max(image.size)
+        # Additional size check for very large images - be more aggressive
+        if max(image.size) > 2048:
+            # Resize to smaller size for much faster processing
+            ratio = 2048 / max(image.size)
             new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
             image = image.resize(new_size, Image.Resampling.LANCZOS)
-            logger.info(f"Task {task_id}: Resized large image to {new_size} for processing")
+            logger.info(f"Task {task_id}: Resized large image to {new_size} for faster processing")
         
-        # Detect faces first with timeout protection
+        # Skip slow face detection - assume faces are present
         face_detection_start = time.time()
-        try:
-            # Skip face detection if image is very large to save time
-            if max(image.size) > 2048:
-                logger.info(f"Task {task_id}: Skipping face detection for large image, assuming faces present")
-                face_count = 1  # Assume at least one face for large images
-                face_detection_time = 0.1
-            else:
-                face_count = detect_faces_count(image)
-                face_detection_time = time.time() - face_detection_start
-        except Exception as e:
-            logger.error(f"Task {task_id}: Face detection failed: {e}")
-            # Continue anyway, assume faces present
-            face_count = 1
-            face_detection_time = 0.1
+        face_count = 1  # Always assume at least one face for speed
+        face_detection_time = 0.01
         
-        # Limit face detection time
-        if face_detection_time > 30:  # 30 seconds max
-            logger.warning(f"Task {task_id}: Face detection took too long ({face_detection_time:.1f}s)")
-        
-        logger.info(f"Task {task_id}: Detected {face_count} faces in {face_detection_time:.2f}s")
-        
-        # Continue processing even if no faces detected (user might want to try anyway)
-        if face_count == 0:
-            logger.warning(f"Task {task_id}: No faces detected, but continuing with enhancement")
-            face_count = 1  # Set to 1 to continue processing
+        logger.info(f"Task {task_id}: Skipped face detection for speed optimization - assuming 1 face")
         
         # Perform face enhancement using cached model
         processing_start = time.time()

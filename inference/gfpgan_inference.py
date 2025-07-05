@@ -58,15 +58,23 @@ class GFPGANInference:
                 else:
                     model_path = downloader.get_model_path("gfpgan_v1.4")
             
-            # Initialize GFPGAN
+            # Initialize GFPGAN with speed optimizations
             self.model = GFPGANer(
                 model_path=str(model_path),
-                upscale=2,  # 2x upscale for faces
+                upscale=1,  # No upscaling for speed (just enhancement)
                 arch='clean',
                 channel_multiplier=2,
                 bg_upsampler=None,  # Don't upscale background for speed
                 device=self.device
             )
+            
+            # Enable inference optimizations
+            if hasattr(self.model.gfpgan, 'eval'):
+                self.model.gfpgan.eval()
+            
+            # GPU optimizations
+            if self.device == 'cuda' and torch.cuda.is_available():
+                torch.backends.cudnn.benchmark = True
             
             self.is_loaded = True
             logger.info(f"GFPGAN model loaded successfully: {model_path}")
@@ -77,34 +85,33 @@ class GFPGANInference:
             return False
     
     def enhance_faces(self, image: Image.Image, only_center_face: bool = False) -> Optional[Image.Image]:
-        """Enhance faces in an image using GFPGAN."""
+        """Enhance faces in an image using GFPGAN with speed optimizations."""
         if not self.is_loaded:
             if not self.load_model():
                 return None
         
         try:
-            # Convert PIL to numpy array (RGB)
-            image_np = np.array(image)
-            
-            # Resize large images to improve processing speed
+            # Aggressive size optimization for speed
             original_size = image.size
-            max_dimension = 1536  # Increased slightly but still reasonable
+            max_dimension = 1024  # Much smaller for speed
             
             if max(original_size) > max_dimension:
                 # Calculate new size maintaining aspect ratio
                 ratio = max_dimension / max(original_size)
                 new_size = (int(original_size[0] * ratio), int(original_size[1] * ratio))
                 image = image.resize(new_size, Image.Resampling.LANCZOS)
-                image_np = np.array(image)
                 logger.info(f"Resized image from {original_size} to {new_size} for faster processing")
             
-            # Convert to BGR for OpenCV/GFPGAN
+            # Convert PIL to numpy array (RGB)
+            image_np = np.array(image)
+            
+            # Convert to BGR for OpenCV/GFPGAN efficiently
             if len(image_np.shape) == 3:
                 if image_np.shape[2] == 4:  # RGBA
-                    # Convert RGBA to RGB first
-                    background = Image.new('RGB', image.size, (255, 255, 255))
-                    background.paste(image, mask=image.split()[-1])
-                    image_np = np.array(background)
+                    # Quick RGBA to RGB conversion
+                    rgb = image_np[:, :, :3]
+                    alpha = image_np[:, :, 3:4] / 255.0
+                    image_np = (rgb * alpha + (1 - alpha) * 255).astype(np.uint8)
                     
                 # Convert RGB to BGR
                 image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
@@ -114,16 +121,17 @@ class GFPGANInference:
             
             logger.info(f"Enhancing faces in image with shape: {image_bgr.shape}")
             
-            # Perform face enhancement with optimized settings
-            cropped_faces, restored_img, improved_img = self.model.enhance(
-                image_bgr,
-                has_aligned=False,
-                only_center_face=only_center_face,
-                paste_back=True,
-                weight=0.5  # Balance between original and enhanced
-            )
+            # Fast enhancement with minimal quality loss
+            with torch.no_grad():  # Disable gradients for speed
+                cropped_faces, restored_img, improved_img = self.model.enhance(
+                    image_bgr,
+                    has_aligned=False,
+                    only_center_face=True,  # Process only center face for speed
+                    paste_back=True,
+                    weight=0.7  # Higher weight for less processing
+                )
             
-            # Use improved_img if available (background + enhanced faces), otherwise restored_img
+            # Use improved_img if available, otherwise restored_img
             result_bgr = improved_img if improved_img is not None else restored_img
             
             # Convert BGR back to RGB
@@ -139,10 +147,10 @@ class GFPGANInference:
             
             logger.info(f"Face enhancement completed. Found {len(cropped_faces)} faces")
             
-            # Clean up GPU memory
+            # Aggressive memory cleanup for concurrency
             if self.device == 'cuda':
                 torch.cuda.empty_cache()
-                gc.collect()
+            gc.collect()
             
             return output_image
             
