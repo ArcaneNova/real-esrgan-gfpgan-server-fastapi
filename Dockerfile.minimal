@@ -1,5 +1,6 @@
-# Use Python 3.9 slim image
-FROM python:3.9-slim
+# Alternative minimal Dockerfile for troubleshooting
+# Use Python 3.9 with Ubuntu base for better package compatibility
+FROM python:3.9-slim-bullseye
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -9,19 +10,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Set work directory
 WORKDIR /app
 
-# Install system dependencies
+# Install only essential system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
-    cmake \
     git \
     wget \
     curl \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender1 \
-    libgomp1 \
-    libgcc-s1 \
     redis-server \
     supervisor \
     && rm -rf /var/lib/apt/lists/* \
